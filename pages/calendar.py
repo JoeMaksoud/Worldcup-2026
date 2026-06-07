@@ -7,68 +7,66 @@ from matches import MATCHES, STAGE_LABELS, STAGE_MULTIPLIER, KNOCKOUT_STAGES
 DUBAI = timezone(timedelta(hours=4))
 
 STAGE_COLORS = {
-    "gs":  "#1e3a5f",
-    "r32": "#1a2e1a",
-    "r16": "#2a1f0e",
-    "qf":  "#2d1515",
-    "sf":  "#2a1040",
-    "3p":  "#1c2020",
-    "f":   "#1a1200",
+    "gs":  "#1e3a5f", "r32": "#1a2e1a", "r16": "#2a1f0e",
+    "qf":  "#2d1515", "sf":  "#2a1040", "3p":  "#1c2020", "f": "#1a1200",
 }
 STAGE_TEXT = {
-    "gs":  "#60a5fa",
-    "r32": "#4ade80",
-    "r16": "#fbbf24",
-    "qf":  "#f87171",
-    "sf":  "#c084fc",
-    "3p":  "#5eead4",
-    "f":   "#f5c842",
+    "gs":  "#60a5fa", "r32": "#4ade80", "r16": "#fbbf24",
+    "qf":  "#f87171", "sf":  "#c084fc", "3p":  "#5eead4", "f": "#f5c842",
 }
 
 
 def is_locked(match: dict) -> bool:
-    """True if kickoff is within 30 min or already past."""
     dt_str = f"{match['date']}T{match['time']}:00+04:00"
     kickoff = datetime.fromisoformat(dt_str)
-    now = datetime.now(tz=DUBAI)
-    return now >= kickoff - timedelta(minutes=30)
+    return datetime.now(tz=DUBAI) >= kickoff - timedelta(minutes=30)
 
 
 def stage_badge(stage: str) -> str:
     bg = STAGE_COLORS.get(stage, "#222")
     fg = STAGE_TEXT.get(stage, "#fff")
     label = STAGE_LABELS.get(stage, stage)
-    return (
-        f'<span style="background:{bg};color:{fg};padding:2px 8px;'
-        f'border-radius:4px;font-size:11px;font-weight:700;'
-        f'text-transform:uppercase;letter-spacing:.05em;">{label}</span>'
-    )
+    return (f'<span style="background:{bg};color:{fg};padding:2px 8px;'
+            f'border-radius:4px;font-size:11px;font-weight:700;'
+            f'text-transform:uppercase;letter-spacing:.05em;">{label}</span>')
 
 
 def mult_badge(stage: str) -> str:
     m = STAGE_MULTIPLIER.get(stage, 1)
     if m <= 1:
         return ""
-    return (
-        f'<span style="background:#2a1a00;color:#f5c842;padding:2px 8px;'
-        f'border-radius:4px;font-size:11px;font-weight:700;">{m}× POINTS</span>'
-    )
+    return (f'<span style="background:#2a1a00;color:#f5c842;padding:2px 8px;'
+            f'border-radius:4px;font-size:11px;font-weight:700;">{m}× POINTS</span>')
+
+
+def pen_btn(label, selected, key):
+    """Render a styled penalty winner button that highlights when selected."""
+    if selected:
+        bg, color, border, fw = "#f5c842", "#0a0e1a", "2px solid #f5c842", "700"
+    else:
+        bg, color, border, fw = "#1a2235", "#94a3b8", "1px solid #2a3550", "500"
+    # Invisible real button overlaid; visible styled div above it
+    st.markdown(f"""
+    <div style="width:100%;padding:10px 14px;border-radius:8px;text-align:center;
+    background:{bg};color:{color};border:{border};font-weight:{fw};
+    font-size:14px;margin-bottom:4px;box-sizing:border-box;">
+    {label}
+    </div>""", unsafe_allow_html=True)
+    return st.button(label, key=key, use_container_width=True,
+                     help="Click to select", label_visibility="collapsed")
 
 
 def show(user: dict):
     st.title("📅 Match Calendar")
 
-    # Load user predictions + results
     preds = db.get_predictions_for_user(user["id"])
     results = db.get_all_results()
 
-    # Group matches by date
     from collections import defaultdict
     by_date: dict[str, list] = defaultdict(list)
     for m in MATCHES:
         by_date[m["date"]].append(m)
 
-    # Month tabs
     months = sorted({d[:7] for d in by_date})
     month_labels = [datetime.strptime(m, "%Y-%m").strftime("%b %Y") for m in months]
     tab_objs = st.tabs(month_labels)
@@ -97,18 +95,20 @@ def show(user: dict):
 
 def render_match(match: dict, pred: dict | None, result: dict | None, user: dict):
     locked = is_locked(match)
-    stage = match["stage"]
-    mult = STAGE_MULTIPLIER.get(stage, 1)
-    is_ko = stage in KNOCKOUT_STAGES
+    stage  = match["stage"]
+    mult   = STAGE_MULTIPLIER.get(stage, 1)
+    is_ko  = stage in KNOCKOUT_STAGES
 
     badges = stage_badge(stage)
     if mult > 1:
         badges += f" &nbsp; {mult_badge(stage)}"
     if locked and not result:
-        badges += ' &nbsp; <span style="background:#2a1515;color:#ef4444;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;">LOCKED</span>'
+        badges += (' &nbsp; <span style="background:#2a1515;color:#ef4444;padding:2px 8px;'
+                   'border-radius:4px;font-size:11px;font-weight:700;">LOCKED</span>')
 
     st.markdown(f"""
-    <div style="background:#1a2235;border:1px solid #2a3550;border-radius:12px;padding:16px 20px;margin-bottom:8px;">
+    <div style="background:#1a2235;border:1px solid #2a3550;border-radius:12px;
+                padding:16px 20px;margin-bottom:8px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
             <div>{badges}</div>
             <div style="font-size:12px;color:#94a3b8;">{match['time']} Dubai · {match['venue'].split(',')[0]}</div>
@@ -116,111 +116,143 @@ def render_match(match: dict, pred: dict | None, result: dict | None, user: dict
         <div style="font-size:16px;font-weight:700;text-align:center;margin-bottom:4px;">
             {match['home']} <span style="color:#475569;font-size:14px;">vs</span> {match['away']}
         </div>
-        {f'<div style="text-align:center;font-size:13px;color:#94a3b8;">{match.get("group","") and "Group " + match["group"]}</div>' if match.get("group") else ""}
+        {('<div style="text-align:center;font-size:13px;color:#94a3b8;">Group ' + match['group'] + '</div>') if match.get('group') else ''}
     </div>
     """, unsafe_allow_html=True)
 
-    # Show result if available
+    # ── Result display ────────────────────────────────────────────
     if result:
         hs, as_ = result["home_score"], result["away_score"]
         pen = result.get("penalty_winner")
-        pen_note = ""
-        if pen:
-            winner_name = match["home"] if pen == "home" else match["away"]
-            pen_note = f" · 🟡 Pens: **{winner_name}** wins"
-
         col_r1, col_r2, col_r3 = st.columns([2, 1, 2])
         with col_r1:
-            st.markdown(f"<div style='text-align:right;font-size:13px;color:#94a3b8;'>Result</div>", unsafe_allow_html=True)
+            st.markdown("<div style='text-align:right;font-size:13px;color:#94a3b8;'>Result</div>",
+                        unsafe_allow_html=True)
         with col_r2:
-            st.markdown(f"<div style='text-align:center;font-size:26px;font-weight:900;'>{hs} – {as_}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align:center;font-size:26px;font-weight:900;'>{hs} – {as_}</div>",
+                        unsafe_allow_html=True)
         with col_r3:
-            if pen_note:
-                st.markdown(pen_note)
+            if pen:
+                winner_name = match["home"] if pen == "home" else match["away"]
+                st.markdown(f"🟡 Pens: **{winner_name}**")
 
-        # Show user's prediction and points
         if pred:
             from matches import calc_points
             pts = calc_points(pred, result, stage)
             pts_color = "#22c55e" if pts >= 3 * mult else ("#f5c842" if pts > 0 else "#475569")
-            pts_label = f"+{pts} pts" if pts > 0 else "0 pts"
             pred_pen = pred.get("penalty_winner")
             pred_pen_note = f" (pens: {match['home'] if pred_pen == 'home' else match['away']})" if pred_pen else ""
             st.markdown(
                 f"Your pick: **{pred['home_score']} – {pred['away_score']}**{pred_pen_note} "
-                f"&nbsp;→&nbsp; <span style='color:{pts_color};font-weight:700;font-size:18px;'>{pts_label}</span>",
+                f"&nbsp;→&nbsp; <span style='color:{pts_color};font-weight:700;font-size:18px;'>"
+                f"{'+' if pts > 0 else ''}{pts} pts</span>",
                 unsafe_allow_html=True,
             )
         st.divider()
         return
 
-    # No result — show prediction form
+    # ── Locked, no result ─────────────────────────────────────────
     if locked:
         if pred:
             pred_pen = pred.get("penalty_winner")
             pen_str = f" · Pens: {match['home'] if pred_pen == 'home' else match['away']}" if pred_pen else ""
-            st.markdown(
-                f"🔒 Locked · Your pick: **{pred['home_score']} – {pred['away_score']}**{pen_str}",
-                unsafe_allow_html=True,
-            )
+            st.markdown(f"🔒 Locked · Your pick: **{pred['home_score']} – {pred['away_score']}**{pen_str}",
+                        unsafe_allow_html=True)
         else:
             st.markdown("🔒 Locked · No prediction submitted")
         st.divider()
         return
 
-    # Editable form
+    # ── Editable prediction form ──────────────────────────────────
     col_home, col_score, col_away = st.columns([3, 2, 3])
     with col_home:
-        st.markdown(f"<div style='text-align:right;padding-top:8px;font-weight:600;'>{match['home']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align:right;padding-top:8px;font-weight:600;'>{match['home']}</div>",
+                    unsafe_allow_html=True)
     with col_score:
         sc1, sc2 = st.columns(2)
         with sc1:
-            h_val = st.number_input(
-                "H", min_value=0, max_value=20,
-                value=int(pred["home_score"]) if pred else 0,
-                key=f"h_{match['id']}", label_visibility="collapsed",
-            )
+            h_val = st.number_input("H", min_value=0, max_value=20,
+                                    value=int(pred["home_score"]) if pred else 0,
+                                    key=f"h_{match['id']}", label_visibility="collapsed")
         with sc2:
-            a_val = st.number_input(
-                "A", min_value=0, max_value=20,
-                value=int(pred["away_score"]) if pred else 0,
-                key=f"a_{match['id']}", label_visibility="collapsed",
-            )
+            a_val = st.number_input("A", min_value=0, max_value=20,
+                                    value=int(pred["away_score"]) if pred else 0,
+                                    key=f"a_{match['id']}", label_visibility="collapsed")
     with col_away:
-        st.markdown(f"<div style='padding-top:8px;font-weight:600;'>{match['away']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='padding-top:8px;font-weight:600;'>{match['away']}</div>",
+                    unsafe_allow_html=True)
 
-    # Penalty picker for knockout draws
+    # ── Penalty picker ────────────────────────────────────────────
+    pen_key = f"pen_sel_{match['id']}"
     pen_winner = None
-    if is_ko and h_val == a_val:
-        st.markdown("<div style='font-size:12px;color:#94a3b8;margin-top:6px;'>Draw after 90 min → pick penalty winner</div>", unsafe_allow_html=True)
-        pen_col1, pen_col2 = st.columns(2)
-        current_pen = pred.get("penalty_winner") if pred else None
-        with pen_col1:
-            if st.button(f"🏆 {match['home']} wins pens", key=f"pen_h_{match['id']}",
-                         type="primary" if current_pen == "home" else "secondary",
-                         use_container_width=True):
-                pen_winner = "home"
-        with pen_col2:
-            if st.button(f"🏆 {match['away']} wins pens", key=f"pen_a_{match['id']}",
-                         type="primary" if current_pen == "away" else "secondary",
-                         use_container_width=True):
-                pen_winner = "away"
-        if pen_winner is None and current_pen:
-            pen_winner = current_pen
 
+    if is_ko and h_val == a_val:
+        # Seed from saved prediction on first render
+        if pen_key not in st.session_state:
+            st.session_state[pen_key] = pred.get("penalty_winner") if pred else None
+
+        selected = st.session_state[pen_key]
+
+        st.markdown(
+            "<div style='font-size:12px;color:#94a3b8;margin:8px 0 4px;'>"
+            "Draw after 90 min → pick penalty winner</div>",
+            unsafe_allow_html=True,
+        )
+
+        pc1, pc2 = st.columns(2)
+
+        with pc1:
+            is_h = selected == "home"
+            bg, fg, bdr, fw = (("#f5c842","#0a0e1a","2px solid #f5c842","700")
+                               if is_h else ("#1a2235","#94a3b8","1px solid #2a3550","500"))
+            st.markdown(
+                f'<div style="padding:10px 14px;border-radius:8px;text-align:center;'
+                f'background:{bg};color:{fg};border:{bdr};font-weight:{fw};'
+                f'font-size:14px;margin-bottom:2px;">🏆 {match["home"]} wins pens</div>',
+                unsafe_allow_html=True,
+            )
+            if st.button(f"Select {match['home']}", key=f"pen_h_{match['id']}",
+                         use_container_width=True, label_visibility="collapsed"):
+                st.session_state[pen_key] = "home"
+                st.rerun()
+
+        with pc2:
+            is_a = selected == "away"
+            bg, fg, bdr, fw = (("#f5c842","#0a0e1a","2px solid #f5c842","700")
+                               if is_a else ("#1a2235","#94a3b8","1px solid #2a3550","500"))
+            st.markdown(
+                f'<div style="padding:10px 14px;border-radius:8px;text-align:center;'
+                f'background:{bg};color:{fg};border:{bdr};font-weight:{fw};'
+                f'font-size:14px;margin-bottom:2px;">🏆 {match["away"]} wins pens</div>',
+                unsafe_allow_html=True,
+            )
+            if st.button(f"Select {match['away']}", key=f"pen_a_{match['id']}",
+                         use_container_width=True, label_visibility="collapsed"):
+                st.session_state[pen_key] = "away"
+                st.rerun()
+
+        pen_winner = st.session_state.get(pen_key)
+
+    # ── Save button ───────────────────────────────────────────────
     save_col, _ = st.columns([1, 3])
     with save_col:
         btn_label = "Update ✓" if pred else "Save prediction"
         if st.button(btn_label, key=f"save_{match['id']}", type="primary", use_container_width=True):
-            db.save_prediction(user["id"], match["id"], h_val, a_val, pen_winner)
+            db.save_prediction(user["id"], match["id"], h_val, a_val,
+                               pen_winner if (is_ko and h_val == a_val) else None)
+            # Clear the local session pen state so it reloads from DB
+            if pen_key in st.session_state:
+                del st.session_state[pen_key]
             st.success("Saved!", icon="✅")
             st.rerun()
 
     if pred:
         pred_pen = pred.get("penalty_winner")
-        pen_str = f" · pens: {match['home'] if pred_pen == 'home' else match['away']}" if pred_pen else ""
+        pen_str = (f" · pens: {match['home'] if pred_pen == 'home' else match['away']}"
+                   if pred_pen else "")
         st.markdown(
-            f"<div style='font-size:12px;color:#22c55e;'>✓ Current: {pred['home_score']} – {pred['away_score']}{pen_str}</div>",
+            f"<div style='font-size:12px;color:#22c55e;'>"
+            f"✓ Current: {pred['home_score']} – {pred['away_score']}{pen_str}</div>",
             unsafe_allow_html=True,
         )
     st.divider()
