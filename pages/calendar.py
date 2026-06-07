@@ -166,76 +166,29 @@ def render_match(match: dict, pred: dict | None, result: dict | None, user: dict
                     unsafe_allow_html=True)
 
     # ── Penalty picker ────────────────────────────────────────────
-    pen_key = f"pen_sel_{match['id']}"
     pen_winner = None
 
     if is_ko and h_val == a_val:
-        # Seed from saved prediction on first render
-        if pen_key not in st.session_state:
-            st.session_state[pen_key] = pred.get("penalty_winner") if pred else None
-
-        selected = st.session_state[pen_key]
+        saved_pen = pred.get("penalty_winner") if pred else None
+        options = [match["home"], match["away"]]
+        default_idx = (0 if saved_pen == "home" else 1) if saved_pen else 0
 
         st.markdown(
-            "<div style='font-size:12px;color:#94a3b8;margin:8px 0 6px;'>"
-            "Draw after 90 min → pick penalty winner</div>",
+            "<div style='font-size:12px;color:#94a3b8;margin:10px 0 4px;'>"
+            "🟡 Draw after 90 min — who wins on penalties?</div>",
             unsafe_allow_html=True,
         )
 
-        # Inject CSS to style the two pen buttons based on current selection
-        h_bg = "#c0392b" if selected == "home" else "#1a2235"
-        h_fg = "#ffffff" if selected == "home" else "#94a3b8"
-        h_bdr = "2px solid #e74c3c" if selected == "home" else "1px solid #2a3550"
-        a_bg = "#c0392b" if selected == "away" else "#1a2235"
-        a_fg = "#ffffff" if selected == "away" else "#94a3b8"
-        a_bdr = "2px solid #e74c3c" if selected == "away" else "1px solid #2a3550"
+        radio_val = st.radio(
+            "Penalty winner",
+            options=options,
+            index=default_idx,
+            horizontal=True,
+            key=f"pen_radio_{match['id']}",
+            label_visibility="collapsed",
+        )
 
-        st.markdown(f"""
-        <style>
-        div[data-testid="stButton"] button[kind="secondary"][data-key="pen_h_{match['id']}"],
-        div[data-testid="column"] div[data-testid="stButton"]:has(button) button {{
-            transition: all .15s;
-        }}
-        /* Home pen button */
-        div[data-testid="stButton"]:has(> button[data-testid="pen_h_{match['id']}"]) button,
-        [data-testid="pen_h_{match['id']}"] {{
-            background: {h_bg} !important;
-            color: {h_fg} !important;
-            border: {h_bdr} !important;
-            font-weight: {'700' if selected == 'home' else '500'} !important;
-        }}
-        /* Away pen button */
-        [data-testid="pen_a_{match['id']}"] {{
-            background: {a_bg} !important;
-            color: {a_fg} !important;
-            border: {a_bdr} !important;
-            font-weight: {'700' if selected == 'away' else '500'} !important;
-        }}
-        </style>
-        """, unsafe_allow_html=True)
-
-        pc1, pc2 = st.columns(2)
-        with pc1:
-            if st.button(f"🏆 {match['home']} wins pens",
-                         key=f"pen_h_{match['id']}",
-                         use_container_width=True):
-                st.session_state[pen_key] = "home"
-                st.rerun()
-        with pc2:
-            if st.button(f"🏆 {match['away']} wins pens",
-                         key=f"pen_a_{match['id']}",
-                         use_container_width=True):
-                st.session_state[pen_key] = "away"
-                st.rerun()
-
-        pen_winner = st.session_state.get(pen_key)
-
-        if selected:
-            winner_name = match["home"] if selected == "home" else match["away"]
-            st.markdown(
-                f"<div style='font-size:12px;color:#e74c3c;margin-top:4px;'>🔴 {winner_name} selected to win on penalties</div>",
-                unsafe_allow_html=True,
-            )
+        pen_winner = "home" if radio_val == match["home"] else "away"
 
     # ── Save button ───────────────────────────────────────────────
     save_col, _ = st.columns([1, 3])
@@ -244,8 +197,6 @@ def render_match(match: dict, pred: dict | None, result: dict | None, user: dict
         if st.button(btn_label, key=f"save_{match['id']}", type="primary", use_container_width=True):
             db.save_prediction(user["id"], match["id"], h_val, a_val,
                                pen_winner if (is_ko and h_val == a_val) else None)
-            if pen_key in st.session_state:
-                del st.session_state[pen_key]
             st.success("Saved!", icon="✅")
             st.rerun()
 
