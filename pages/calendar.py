@@ -39,23 +39,6 @@ def mult_badge(stage: str) -> str:
             f'border-radius:4px;font-size:11px;font-weight:700;">{m}× POINTS</span>')
 
 
-def pen_btn(label, selected, key):
-    """Render a styled penalty winner button that highlights when selected."""
-    if selected:
-        bg, color, border, fw = "#f5c842", "#0a0e1a", "2px solid #f5c842", "700"
-    else:
-        bg, color, border, fw = "#1a2235", "#94a3b8", "1px solid #2a3550", "500"
-    # Invisible real button overlaid; visible styled div above it
-    st.markdown(f"""
-    <div style="width:100%;padding:10px 14px;border-radius:8px;text-align:center;
-    background:{bg};color:{color};border:{border};font-weight:{fw};
-    font-size:14px;margin-bottom:4px;box-sizing:border-box;">
-    {label}
-    </div>""", unsafe_allow_html=True)
-    return st.button(label, key=key, use_container_width=True,
-                     help="Click to select", label_visibility="collapsed")
-
-
 def show(user: dict):
     st.title("📅 Match Calendar")
 
@@ -194,44 +177,65 @@ def render_match(match: dict, pred: dict | None, result: dict | None, user: dict
         selected = st.session_state[pen_key]
 
         st.markdown(
-            "<div style='font-size:12px;color:#94a3b8;margin:8px 0 4px;'>"
+            "<div style='font-size:12px;color:#94a3b8;margin:8px 0 6px;'>"
             "Draw after 90 min → pick penalty winner</div>",
             unsafe_allow_html=True,
         )
 
-        pc1, pc2 = st.columns(2)
+        # Inject CSS to style the two pen buttons based on current selection
+        h_bg = "#c0392b" if selected == "home" else "#1a2235"
+        h_fg = "#ffffff" if selected == "home" else "#94a3b8"
+        h_bdr = "2px solid #e74c3c" if selected == "home" else "1px solid #2a3550"
+        a_bg = "#c0392b" if selected == "away" else "#1a2235"
+        a_fg = "#ffffff" if selected == "away" else "#94a3b8"
+        a_bdr = "2px solid #e74c3c" if selected == "away" else "1px solid #2a3550"
 
+        st.markdown(f"""
+        <style>
+        div[data-testid="stButton"] button[kind="secondary"][data-key="pen_h_{match['id']}"],
+        div[data-testid="column"] div[data-testid="stButton"]:has(button) button {{
+            transition: all .15s;
+        }}
+        /* Home pen button */
+        div[data-testid="stButton"]:has(> button[data-testid="pen_h_{match['id']}"]) button,
+        [data-testid="pen_h_{match['id']}"] {{
+            background: {h_bg} !important;
+            color: {h_fg} !important;
+            border: {h_bdr} !important;
+            font-weight: {'700' if selected == 'home' else '500'} !important;
+        }}
+        /* Away pen button */
+        [data-testid="pen_a_{match['id']}"] {{
+            background: {a_bg} !important;
+            color: {a_fg} !important;
+            border: {a_bdr} !important;
+            font-weight: {'700' if selected == 'away' else '500'} !important;
+        }}
+        </style>
+        """, unsafe_allow_html=True)
+
+        pc1, pc2 = st.columns(2)
         with pc1:
-            is_h = selected == "home"
-            bg, fg, bdr, fw = (("#f5c842","#0a0e1a","2px solid #f5c842","700")
-                               if is_h else ("#1a2235","#94a3b8","1px solid #2a3550","500"))
-            st.markdown(
-                f'<div style="padding:10px 14px;border-radius:8px;text-align:center;'
-                f'background:{bg};color:{fg};border:{bdr};font-weight:{fw};'
-                f'font-size:14px;margin-bottom:2px;">🏆 {match["home"]} wins pens</div>',
-                unsafe_allow_html=True,
-            )
-            if st.button(f"Select {match['home']}", key=f"pen_h_{match['id']}",
-                         use_container_width=True, label_visibility="collapsed"):
+            if st.button(f"🏆 {match['home']} wins pens",
+                         key=f"pen_h_{match['id']}",
+                         use_container_width=True):
                 st.session_state[pen_key] = "home"
                 st.rerun()
-
         with pc2:
-            is_a = selected == "away"
-            bg, fg, bdr, fw = (("#f5c842","#0a0e1a","2px solid #f5c842","700")
-                               if is_a else ("#1a2235","#94a3b8","1px solid #2a3550","500"))
-            st.markdown(
-                f'<div style="padding:10px 14px;border-radius:8px;text-align:center;'
-                f'background:{bg};color:{fg};border:{bdr};font-weight:{fw};'
-                f'font-size:14px;margin-bottom:2px;">🏆 {match["away"]} wins pens</div>',
-                unsafe_allow_html=True,
-            )
-            if st.button(f"Select {match['away']}", key=f"pen_a_{match['id']}",
-                         use_container_width=True, label_visibility="collapsed"):
+            if st.button(f"🏆 {match['away']} wins pens",
+                         key=f"pen_a_{match['id']}",
+                         use_container_width=True):
                 st.session_state[pen_key] = "away"
                 st.rerun()
 
         pen_winner = st.session_state.get(pen_key)
+
+        if selected:
+            winner_name = match["home"] if selected == "home" else match["away"]
+            st.markdown(
+                f"<div style='font-size:12px;color:#e74c3c;margin-top:4px;'>🔴 {winner_name} selected to win on penalties</div>",
+                unsafe_allow_html=True,
+            )
 
     # ── Save button ───────────────────────────────────────────────
     save_col, _ = st.columns([1, 3])
@@ -240,7 +244,6 @@ def render_match(match: dict, pred: dict | None, result: dict | None, user: dict
         if st.button(btn_label, key=f"save_{match['id']}", type="primary", use_container_width=True):
             db.save_prediction(user["id"], match["id"], h_val, a_val,
                                pen_winner if (is_ko and h_val == a_val) else None)
-            # Clear the local session pen state so it reloads from DB
             if pen_key in st.session_state:
                 del st.session_state[pen_key]
             st.success("Saved!", icon="✅")
