@@ -55,7 +55,7 @@ def show_auth():
     col1, col2, col3 = st.columns([1, 1.2, 1])
     with col2:
         st.markdown("## ⚽ WC2026 Predictor")
-        st.caption("Prediction League · 5 AED / Match")
+        st.caption("FIFA World Cup 2026 · Prediction League")
         st.divider()
         tab_login, tab_reg = st.tabs(["Sign In", "Register"])
 
