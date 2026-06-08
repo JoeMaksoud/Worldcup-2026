@@ -5,7 +5,6 @@ from matches import MATCHES, calc_points, STAGE_MULTIPLIER
 
 MATCH_MAP = {m["id"]: m for m in MATCHES}
 MEDALS = ["🥇", "🥈", "🥉"]
-PRIZE_PER_MATCH = 5  # AED
 
 
 def show():
@@ -48,14 +47,11 @@ def show():
 
     # Summary stats
     total_players = len(users)
-    prize_pool = total_players * 104 * PRIZE_PER_MATCH
     results_in = len(results)
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2 = st.columns(2)
     c1.metric("Players", total_players)
-    c2.metric("Prize Pool", f"{prize_pool:,} AED")
-    c3.metric("Matches with Results", f"{results_in} / 104")
-    c4.metric("AED per Match", PRIZE_PER_MATCH)
+    c2.metric("Matches with Results", f"{results_in} / 104")
 
     st.divider()
 
