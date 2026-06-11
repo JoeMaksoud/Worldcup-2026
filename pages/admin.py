@@ -17,6 +17,8 @@ def show():
 
     st.info(f"**{len(users)}** registered players · **{len(results)}** results entered so far")
 
+    show_password_reset(users)
+
     # Stage filter
     selected_stage = st.selectbox(
         "Filter by stage",
@@ -98,7 +100,39 @@ def render_result_form(match: dict, result: dict | None):
         with save_col:
             if st.button("💾 Save Result", key=f"rsave_{match['id']}", type="primary", use_container_width=True):
                 db.save_result(match["id"], h_val, a_val, pen_winner if (is_ko and h_val == a_val) else None)
-                db.get_all_results.clear()  # bust cache
                 st.success("Result saved!")
                 st.rerun()
         st.divider()
+
+def show_password_reset(users: list[dict]):
+    st.divider()
+    st.subheader("🔑 Reset Player Password")
+
+    # Exclude the admin from the list
+    current_user_id = st.session_state.user["id"]
+    other_users = [u for u in users if u["id"] != current_user_id]
+
+    if not other_users:
+        st.info("No other players registered yet.")
+        return
+
+    usernames = [u["username"] for u in other_users]
+    selected_username = st.selectbox("Select player", usernames, key="reset_user_select")
+    new_password = st.text_input("New password", type="password", key="reset_new_pass")
+    confirm_password = st.text_input("Confirm new password", type="password", key="reset_confirm_pass")
+
+    if st.button("Reset Password", type="primary", key="reset_btn"):
+        if not new_password:
+            st.error("Please enter a new password.")
+        elif len(new_password) < 6:
+            st.error("Password must be at least 6 characters.")
+        elif new_password != confirm_password:
+            st.error("Passwords don't match.")
+        else:
+            import bcrypt
+            selected_user = next(u for u in other_users if u["username"] == selected_username)
+            new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+            db.get_client().table("users").update(
+                {"password_hash": new_hash}
+            ).eq("id", selected_user["id"]).execute()
+            st.success(f"✅ Password for **{selected_username}** has been reset.")
