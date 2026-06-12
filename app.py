@@ -112,13 +112,13 @@ def show_app():
             st.rerun()
 
     if page == "📅 Calendar":
-        from pages import calendar as cal_page
+        from pages import _calendar as cal_page
         cal_page.show(user)
     elif page == "🏆 Leaderboard":
-        from pages import leaderboard as lb_page
+        from pages import _leaderboard as lb_page
         lb_page.show()
     elif page == "⚙️ Admin":
-        from pages import admin as admin_page
+        from pages import _admin as admin_page
         admin_page.show()
 
 
