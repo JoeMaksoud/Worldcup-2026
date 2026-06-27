@@ -7,65 +7,122 @@ from collections import defaultdict
 from datetime import datetime
 
 STAGE_ORDER = ["gs", "r32", "r16", "qf", "sf", "3p", "f"]
+KNOCKOUT_MATCHES = [m for m in MATCHES if m["stage"] in KNOCKOUT_STAGES]
 
 
 def show():
     st.title("⚙️ Admin Panel")
 
-    results  = db.get_all_results()
-    users    = db.get_all_users()
+    results   = db.get_all_results()
+    users     = db.get_all_users()
     overrides = db.get_match_overrides()
 
     st.info(f"**{len(users)}** registered players · **{len(results)}** results entered")
 
-    # ── Password Reset ─────────────────────────────────────────────────────────
     show_password_reset(users)
-
-    show_api_debug()
-
     st.divider()
+    show_bracket_editor(overrides)
+    st.divider()
+    show_live_sync()
+    st.divider()
+    show_results_entry(results, overrides)
 
-    # ── Live Sync Section ──────────────────────────────────────────────────────
+
+# ── BRACKET EDITOR ────────────────────────────────────────────────────────────
+
+def show_bracket_editor(overrides: dict):
+    st.subheader("🏆 Bracket Editor")
+    st.caption("Set the team names for knockout matches as teams qualify.")
+
+    by_stage = defaultdict(list)
+    for m in KNOCKOUT_MATCHES:
+        by_stage[m["stage"]].append(m)
+
+    for stage in ["r32", "r16", "qf", "sf", "3p", "f"]:
+        matches = by_stage.get(stage, [])
+        if not matches:
+            continue
+        with st.expander(f"**{STAGE_LABELS[stage]}** ({len(matches)} matches)"):
+            for match in matches:
+                current = overrides.get(match["id"], {})
+                current_home = current.get("home", match["home"])
+                current_away = current.get("away", match["away"])
+
+                # Show placeholder or confirmed
+                is_confirmed = match["id"] in overrides
+                status = "✅" if is_confirmed else "⬜"
+                st.markdown(f"{status} **Match {match['id']}** · {match['date']} {match['time']} Dubai")
+
+                col1, col2, col3 = st.columns([2, 2, 1])
+                with col1:
+                    home_input = st.text_input(
+                        "Home team",
+                        value=current_home,
+                        key=f"be_home_{match['id']}",
+                        placeholder="e.g. Brazil",
+                    )
+                with col2:
+                    away_input = st.text_input(
+                        "Away team",
+                        value=current_away,
+                        key=f"be_away_{match['id']}",
+                        placeholder="e.g. Argentina",
+                    )
+                with col3:
+                    st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+                    if st.button("Save", key=f"be_save_{match['id']}", use_container_width=True, type="primary"):
+                        if home_input.strip() and away_input.strip():
+                            db.save_match_override(match["id"], home_input.strip(), away_input.strip())
+                            st.success(f"Saved: {home_input} vs {away_input}")
+                            st.rerun()
+                        else:
+                            st.error("Both team names required.")
+                st.divider()
+
+
+# ── LIVE SYNC ─────────────────────────────────────────────────────────────────
+
+def show_live_sync():
     st.subheader("🌐 Live Data Sync")
 
     if not api.is_api_configured():
-        st.warning("⚠️ No RapidAPI key found. Add `RAPIDAPI_KEY` to your Streamlit secrets to enable live sync.")
-    else:
-        col1, col2 = st.columns(2)
+        st.warning("⚠️ No RapidAPI key found in secrets.")
+        return
 
-        with col1:
-            st.markdown("**Sync Results**")
-            st.caption("Pulls finished match scores from API-Football and updates the leaderboard automatically.")
-            if st.button("🔄 Sync Results Now", type="primary", use_container_width=True, key="sync_results"):
-                with st.spinner("Fetching from API-Football..."):
-                    api_results = api.get_finished_results()
-                if not api_results:
-                    st.warning("No finished matches found in API yet.")
-                else:
-                    synced, skipped = db.sync_results_from_api(api_results, MATCHES)
-                    st.success(f"✅ Synced **{synced}** results. Skipped **{skipped}** (manual override active).")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Sync Results**")
+        st.caption("Pulls finished match scores from API and updates the leaderboard.")
+        if st.button("🔄 Sync Results Now", type="primary", use_container_width=True, key="sync_results"):
+            with st.spinner("Fetching from API..."):
+                api_results = api.get_finished_results()
+            if not api_results:
+                st.warning("No finished matches found in API.")
+            else:
+                synced, skipped = db.sync_results_from_api(api_results, MATCHES)
+                st.success(f"✅ Synced **{synced}** results. Skipped **{skipped}** (manual override).")
 
-        with col2:
-            st.markdown("**Sync Knockout Teams**")
-            st.caption("Updates bracket team names as teams qualify through each round.")
-            if st.button("🔄 Sync Bracket Now", use_container_width=True, key="sync_teams"):
-                with st.spinner("Fetching upcoming fixtures..."):
-                    api_upcoming = api.get_upcoming_with_teams()
-                updated = db.sync_teams_from_api(api_upcoming, MATCHES)
-                if updated:
-                    st.success(f"✅ Updated **{updated}** knockout match team names.")
-                else:
-                    st.info("No new team names to update yet.")
+    with col2:
+        st.markdown("**Sync Bracket**")
+        st.caption("Updates knockout team names from API as teams qualify.")
+        if st.button("🔄 Sync Bracket Now", use_container_width=True, key="sync_teams"):
+            with st.spinner("Fetching upcoming fixtures..."):
+                api_upcoming = api.get_upcoming_with_teams()
+            updated = db.sync_teams_from_api(api_upcoming, MATCHES)
+            if updated:
+                st.success(f"✅ Updated **{updated}** knockout match team names.")
+            else:
+                st.info("No new team names to update yet.")
 
-        # Auto-sync status
-        if api.any_live_now():
-            st.success("🔴 **Live matches happening now!** Sync results to get latest scores.")
+    if api.any_live_now():
+        st.success("🔴 **Live matches happening now!**")
 
-    st.divider()
 
-    # ── Manual Results Entry ───────────────────────────────────────────────────
+# ── RESULTS ENTRY ─────────────────────────────────────────────────────────────
+
+def show_results_entry(results: dict, overrides: dict):
     st.subheader("✏️ Manual Results Entry")
-    st.caption("Use this to correct any API errors. Manual entries won't be overwritten by auto-sync.")
+    st.caption("Manually enter or correct match results. These won't be overwritten by auto-sync.")
 
     selected_stage = st.selectbox(
         "Filter by stage",
@@ -87,7 +144,6 @@ def show():
 
         with st.expander(f"📅 **{label}** — {done}/{len(day_matches)} results entered"):
             for match in day_matches:
-                # Apply bracket overrides for knockout team names
                 display = dict(match)
                 if match["id"] in overrides:
                     display["home"] = overrides[match["id"]]["home"]
@@ -114,7 +170,6 @@ def render_result_form(match: dict, result: dict | None):
 
     with st.container():
         st.markdown(header)
-
         col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
         with col1:
             st.markdown(f"<div style='text-align:right;padding-top:6px;font-weight:600;'>{match['home']}</div>",
@@ -135,14 +190,14 @@ def render_result_form(match: dict, result: dict | None):
         if is_ko and h_val == a_val:
             st.markdown("<div style='font-size:12px;color:#94a3b8;'>Draw → select penalty winner</div>",
                         unsafe_allow_html=True)
-            p1, p2, p3 = st.columns([1, 1, 2])
+            p1, p2, _ = st.columns([1, 1, 2])
             with p1:
-                if st.button(f"{match['home']}", key=f"rph_{match['id']}",
+                if st.button(match["home"], key=f"rph_{match['id']}",
                              type="primary" if pen_winner == "home" else "secondary",
                              use_container_width=True):
                     pen_winner = "home"
             with p2:
-                if st.button(f"{match['away']}", key=f"rpa_{match['id']}",
+                if st.button(match["away"], key=f"rpa_{match['id']}",
                              type="primary" if pen_winner == "away" else "secondary",
                              use_container_width=True):
                     pen_winner = "away"
@@ -154,18 +209,18 @@ def render_result_form(match: dict, result: dict | None):
             if st.button("💾 Save (Manual)", key=f"rsave_{match['id']}", type="primary", use_container_width=True):
                 db.save_result_manual(match["id"], h_val, a_val,
                                       pen_winner if (is_ko and h_val == a_val) else None)
-                st.success("Saved as manual override — API won't overwrite this.")
+                st.success("Saved!")
                 st.rerun()
-
         with btn_col2:
             if is_manual:
                 if st.button("🤖 Release to API", key=f"release_{match['id']}", use_container_width=True):
                     db.clear_manual_override(match["id"])
-                    st.success("Manual override removed — API can now update this result.")
+                    st.success("Released.")
                     st.rerun()
-
         st.divider()
 
+
+# ── PASSWORD RESET ────────────────────────────────────────────────────────────
 
 def show_password_reset(users: list[dict]):
     st.subheader("🔑 Reset Player Password")
@@ -196,32 +251,3 @@ def show_password_reset(users: list[dict]):
                 {"password_hash": new_hash}
             ).eq("id", selected_user["id"]).execute()
             st.success(f"✅ Password for **{selected_username}** has been reset.")
-
-
-def show_api_debug():
-    """Temporary debug section to inspect raw API response."""
-    with st.expander("🔧 API Debug (raw response)", expanded=False):
-        if st.button("Fetch raw /matches response", key="debug_fetch"):
-            import requests
-            try:
-                r = requests.get(
-                    "https://wc26-live-football-api.p.rapidapi.com/matches",
-                    headers={
-                        "X-RapidAPI-Key": st.secrets.get("RAPIDAPI_KEY", ""),
-                        "X-RapidAPI-Host": "wc26-live-football-api.p.rapidapi.com",
-                    },
-                    timeout=10,
-                )
-                st.write(f"**Status:** {r.status_code}")
-                data = r.json()
-                st.write(f"**Type:** {type(data).__name__}")
-                if isinstance(data, list):
-                    st.write(f"**Count:** {len(data)}")
-                    if data:
-                        st.write("**First item keys:**", list(data[0].keys()) if isinstance(data[0], dict) else data[0])
-                        st.json(data[0])
-                elif isinstance(data, dict):
-                    st.write("**Keys:**", list(data.keys()))
-                    st.json(data)
-            except Exception as e:
-                st.error(f"Error: {e}")
