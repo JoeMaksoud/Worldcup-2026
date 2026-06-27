@@ -133,20 +133,25 @@ def save_match_override(match_id: int, home: str, away: str) -> None:
 
 def sync_results_from_api(api_results: list[dict], our_matches: list[dict]) -> tuple[int, int]:
     """
-    Match API results to our match IDs by team name + stage, then upsert.
+    Match API results to our match IDs using api_id directly (WC26 API uses same IDs as us).
+    Falls back to fuzzy name matching if needed.
     Skips matches with manual_override=True.
     Returns (synced_count, skipped_count).
     """
     existing = get_all_results()
+    our_match_ids = {m["id"] for m in our_matches}
     synced = skipped = 0
 
     for api_r in api_results:
-        # Find our match by home+away team names and stage
-        match = _find_match(api_r, our_matches)
-        if not match:
+        # Try direct ID match first
+        mid = api_r.get("api_id")
+        if mid not in our_match_ids:
+            # Fall back to name matching
+            match = _find_match(api_r, our_matches)
+            mid = match["id"] if match else None
+        if not mid:
             continue
 
-        mid = match["id"]
         # Skip if admin has manually overridden this result
         if existing.get(mid, {}).get("manual_override"):
             skipped += 1

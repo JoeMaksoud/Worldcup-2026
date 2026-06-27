@@ -1,12 +1,12 @@
-# api_football.py — WC26 Live Football API (rapidapi.com/Emiledaou/api/wc26-live-football-api)
+# api_football.py — WC26 Live Football API
 import streamlit as st
 import requests
-from datetime import datetime, timezone, timedelta
 
-DUBAI    = timezone(timedelta(hours=4))
 API_HOST = "wc26-live-football-api.p.rapidapi.com"
 
+# Round strings → our stage codes
 STAGE_MAP = {
+    "matchday":    "gs",
     "group":       "gs",
     "round of 32": "r32",
     "round of 16": "r16",
@@ -16,8 +16,7 @@ STAGE_MAP = {
     "final":       "f",
 }
 
-FINISHED_STATUSES = {"FT","AET","PEN","finished","Finished","FINISHED","ft","aet","pen"}
-LIVE_STATUSES     = {"1H","HT","2H","ET","BT","P","SUSP","INT","LIVE","live","Live"}
+FINISHED_STATUSES = {"FT", "AET", "PEN", "ft", "aet", "pen"}
 
 
 def _headers() -> dict:
@@ -27,12 +26,11 @@ def _headers() -> dict:
     }
 
 
-def _get(endpoint: str, params: dict | None = None) -> dict | list | None:
+def _get(endpoint: str) -> dict | list | None:
     try:
         r = requests.get(
             f"https://{API_HOST}/{endpoint}",
             headers=_headers(),
-            params=params or {},
             timeout=10,
         )
         return r.json() if r.status_code == 200 else None
@@ -47,13 +45,19 @@ def is_api_configured() -> bool:
 @st.cache_data(ttl=300)
 def _fetch_all_matches() -> list[dict]:
     data = _get("matches")
-    if not data:
+    if not data or not isinstance(data, dict):
         return []
-    if isinstance(data, list):
-        return data
-    for key in ("matches", "fixtures", "data", "results"):
-        if key in data and isinstance(data[key], list):
-            return data[key]
+    # Response: {"count": 104, "data": {"": [...]}, "status": "ok"}
+    inner = data.get("data", {})
+    if isinstance(inner, list):
+        return inner
+    if isinstance(inner, dict):
+        # data is {"": [...]} — flatten all values
+        all_matches = []
+        for v in inner.values():
+            if isinstance(v, list):
+                all_matches.extend(v)
+        return all_matches
     return []
 
 
@@ -64,9 +68,15 @@ def _fetch_live_matches_raw() -> list[dict]:
         return []
     if isinstance(data, list):
         return data
-    for key in ("matches", "live", "data"):
-        if key in data and isinstance(data[key], list):
-            return data[key]
+    inner = data.get("data", data.get("live", []))
+    if isinstance(inner, list):
+        return inner
+    if isinstance(inner, dict):
+        all_matches = []
+        for v in inner.values():
+            if isinstance(v, list):
+                all_matches.extend(v)
+        return all_matches
     return []
 
 
@@ -81,70 +91,77 @@ def _map_stage(round_str: str) -> str | None:
 
 
 def _parse_match(m: dict) -> dict | None:
-    # Normalise team names
-    home_raw = m.get("home_team") or m.get("homeTeam") or m.get("home") or {}
-    away_raw = m.get("away_team") or m.get("awayTeam") or m.get("away") or {}
-    home_name = home_raw.get("name") if isinstance(home_raw, dict) else str(home_raw)
-    away_name = away_raw.get("name") if isinstance(away_raw, dict) else str(away_raw)
-    if not home_name or not away_name:
+    """Parse a match from the WC26 API into our internal format."""
+    home = m.get("home")
+    away = m.get("away")
+    if not home or not away:
         return None
 
-    # Normalise score
-    score_raw  = m.get("score") or m.get("goals") or {}
-    home_score = score_raw.get("home") if isinstance(score_raw, dict) else m.get("home_score")
-    away_score = score_raw.get("away") if isinstance(score_raw, dict) else m.get("away_score")
+    # Scores live inside live_data
+    live = m.get("live_data") or {}
+    home_score = live.get("score_home")
+    away_score = live.get("score_away")
+    status     = live.get("status") or ""
+    played     = m.get("played", False)
 
-    # Normalise status
-    status_raw = m.get("status") or m.get("match_status") or ""
-    status = status_raw.get("short") or status_raw.get("long", "") if isinstance(status_raw, dict) else str(status_raw)
+    # Fallback: parse "score" string like "2-1"
+    if home_score is None and m.get("score"):
+        try:
+            parts = str(m["score"]).split("-")
+            home_score = int(parts[0].strip())
+            away_score = int(parts[1].strip())
+        except Exception:
+            pass
 
-    # Normalise round/stage
-    round_raw  = m.get("round") or m.get("stage") or ""
-    if isinstance(round_raw, dict):
-        round_raw = round_raw.get("name") or ""
-    if not round_raw and isinstance(m.get("league"), dict):
-        round_raw = m["league"].get("round", "")
-    stage = _map_stage(str(round_raw))
+    # Stage from round
+    round_str = m.get("round") or m.get("stage") or ""
+    stage = _map_stage(round_str)
 
-    # Penalty winner
+    # Penalty winner — count goals per team for PEN matches
     penalty_winner = None
-    if isinstance(score_raw, dict):
-        pen = score_raw.get("penalty") or {}
-        if isinstance(pen, dict):
-            hp = pen.get("home") or 0
-            ap = pen.get("away") or 0
-            if hp != ap:
-                penalty_winner = "home" if hp > ap else "away"
+    if status == "PEN":
+        goals = live.get("goals") or []
+        home_goals = sum(1 for g in goals if g.get("team") == home)
+        away_goals = sum(1 for g in goals if g.get("team") == away)
+        if home_goals != away_goals:
+            penalty_winner = "home" if home_goals > away_goals else "away"
 
     return {
-        "api_id":         m.get("id") or m.get("fixture_id") or m.get("match_id"),
-        "home":           home_name,
-        "away":           away_name,
+        "api_id":         m.get("id"),
+        "home":           home,
+        "away":           away,
         "home_score":     int(home_score) if home_score is not None else None,
         "away_score":     int(away_score) if away_score is not None else None,
         "status":         status,
+        "played":         played,
         "stage":          stage,
-        "round":          str(round_raw),
+        "round":          round_str,
         "penalty_winner": penalty_winner,
     }
 
 
 def get_finished_results() -> list[dict]:
+    """Returns all finished matches with scores."""
     out = []
     for m in _fetch_all_matches():
         p = _parse_match(m)
-        if p and p["status"] in FINISHED_STATUSES and p["home_score"] is not None and p["stage"]:
+        if not p:
+            continue
+        # Match is finished if status is FT/AET/PEN or played=true
+        is_finished = p["status"] in FINISHED_STATUSES or p.get("played")
+        if is_finished and p["home_score"] is not None and p["stage"]:
             out.append(p)
     return out
 
 
 def get_upcoming_with_teams() -> list[dict]:
+    """Returns knockout fixtures where both teams are confirmed."""
     out = []
     for m in _fetch_all_matches():
         p = _parse_match(m)
         if not p or not p["stage"] or p["stage"] == "gs":
             continue
-        if p["status"] in FINISHED_STATUSES:
+        if p.get("played") or p["status"] in FINISHED_STATUSES:
             continue
         if "tbd" in p["home"].lower() or "tbd" in p["away"].lower():
             continue
