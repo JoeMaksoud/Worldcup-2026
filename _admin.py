@@ -1,34 +1,138 @@
-# pages/admin.py
+# pages/_admin.py
 import streamlit as st
 import db
+import api_football as api
 from matches import MATCHES, STAGE_LABELS, KNOCKOUT_STAGES
 from collections import defaultdict
 from datetime import datetime
 
 STAGE_ORDER = ["gs", "r32", "r16", "qf", "sf", "3p", "f"]
+KNOCKOUT_MATCHES = [m for m in MATCHES if m["stage"] in KNOCKOUT_STAGES]
 
 
 def show():
     st.title("⚙️ Admin Panel")
-    st.caption("Enter match results · Scores auto-calculate for all players")
 
-    results = db.get_all_results()
-    users   = db.get_all_users()
+    results   = db.get_all_results()
+    users     = db.get_all_users()
+    overrides = db.get_match_overrides()
 
-    st.info(f"**{len(users)}** registered players · **{len(results)}** results entered so far")
+    st.info(f"**{len(users)}** registered players · **{len(results)}** results entered")
 
     show_password_reset(users)
+    st.divider()
+    show_bracket_editor(overrides)
+    st.divider()
+    show_live_sync()
+    st.divider()
+    show_results_entry(results, overrides)
 
-    # Stage filter
+
+# ── BRACKET EDITOR ────────────────────────────────────────────────────────────
+
+def show_bracket_editor(overrides: dict):
+    st.subheader("🏆 Bracket Editor")
+    st.caption("Set the team names for knockout matches as teams qualify.")
+
+    by_stage = defaultdict(list)
+    for m in KNOCKOUT_MATCHES:
+        by_stage[m["stage"]].append(m)
+
+    for stage in ["r32", "r16", "qf", "sf", "3p", "f"]:
+        matches = by_stage.get(stage, [])
+        if not matches:
+            continue
+        with st.expander(f"**{STAGE_LABELS[stage]}** ({len(matches)} matches)"):
+            for match in matches:
+                current = overrides.get(match["id"], {})
+                current_home = current.get("home", match["home"])
+                current_away = current.get("away", match["away"])
+
+                # Show placeholder or confirmed
+                is_confirmed = match["id"] in overrides
+                status = "✅" if is_confirmed else "⬜"
+                st.markdown(f"{status} **Match {match['id']}** · {match['date']} {match['time']} Dubai")
+
+                col1, col2, col3 = st.columns([2, 2, 1])
+                with col1:
+                    home_input = st.text_input(
+                        "Home team",
+                        value=current_home,
+                        key=f"be_home_{match['id']}",
+                        placeholder="e.g. Brazil",
+                    )
+                with col2:
+                    away_input = st.text_input(
+                        "Away team",
+                        value=current_away,
+                        key=f"be_away_{match['id']}",
+                        placeholder="e.g. Argentina",
+                    )
+                with col3:
+                    st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+                    if st.button("Save", key=f"be_save_{match['id']}", use_container_width=True, type="primary"):
+                        if home_input.strip() and away_input.strip():
+                            db.save_match_override(match["id"], home_input.strip(), away_input.strip())
+                            st.success(f"Saved: {home_input} vs {away_input}")
+                            st.rerun()
+                        else:
+                            st.error("Both team names required.")
+                st.divider()
+
+
+# ── LIVE SYNC ─────────────────────────────────────────────────────────────────
+
+def show_live_sync():
+    st.subheader("🌐 Live Data Sync")
+
+    if not api.is_api_configured():
+        st.warning("⚠️ No RapidAPI key found in secrets.")
+        return
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Sync Results**")
+        st.caption("Pulls finished match scores from API and updates the leaderboard.")
+        if st.button("🔄 Sync Results Now", type="primary", use_container_width=True, key="sync_results"):
+            with st.spinner("Fetching from API..."):
+                api_results = api.get_finished_results()
+            if not api_results:
+                st.warning("No finished matches found in API.")
+            else:
+                synced, skipped = db.sync_results_from_api(api_results, MATCHES)
+                st.success(f"✅ Synced **{synced}** results. Skipped **{skipped}** (manual override).")
+
+    with col2:
+        st.markdown("**Sync Bracket**")
+        st.caption("Updates knockout team names from API as teams qualify.")
+        if st.button("🔄 Sync Bracket Now", use_container_width=True, key="sync_teams"):
+            with st.spinner("Fetching upcoming fixtures..."):
+                api_upcoming = api.get_upcoming_with_teams()
+            updated = db.sync_teams_from_api(api_upcoming, MATCHES)
+            if updated:
+                st.success(f"✅ Updated **{updated}** knockout match team names.")
+            else:
+                st.info("No new team names to update yet.")
+
+    if api.any_live_now():
+        st.success("🔴 **Live matches happening now!**")
+
+
+# ── RESULTS ENTRY ─────────────────────────────────────────────────────────────
+
+def show_results_entry(results: dict, overrides: dict):
+    st.subheader("✏️ Manual Results Entry")
+    st.caption("Manually enter or correct match results. These won't be overwritten by auto-sync.")
+
     selected_stage = st.selectbox(
         "Filter by stage",
         ["All"] + STAGE_ORDER,
         format_func=lambda s: "All Stages" if s == "All" else STAGE_LABELS.get(s, s),
+        key="stage_filter",
     )
 
     filtered = MATCHES if selected_stage == "All" else [m for m in MATCHES if m["stage"] == selected_stage]
 
-    # Group by date
     by_date: dict[str, list] = defaultdict(list)
     for m in filtered:
         by_date[m["date"]].append(m)
@@ -40,19 +144,24 @@ def show():
 
         with st.expander(f"📅 **{label}** — {done}/{len(day_matches)} results entered"):
             for match in day_matches:
-                render_result_form(match, results.get(match["id"]))
+                display = dict(match)
+                if match["id"] in overrides:
+                    display["home"] = overrides[match["id"]]["home"]
+                    display["away"] = overrides[match["id"]]["away"]
+                render_result_form(display, results.get(match["id"]))
 
 
 def render_result_form(match: dict, result: dict | None):
     stage  = match["stage"]
     is_ko  = stage in KNOCKOUT_STAGES
 
-    has_result = result is not None
-    status_icon = "✅" if has_result else "⬜"
-    header = (
-        f"{status_icon} **{match['home']} vs {match['away']}** "
-        f"— {STAGE_LABELS.get(stage, stage)} · {match['time']} Dubai"
-    )
+    has_result   = result is not None
+    is_manual    = result.get("manual_override", False) if result else False
+    status_icon  = "✅" if has_result else "⬜"
+    manual_badge = " 🔒 Manual" if is_manual else (" 🤖 Auto" if has_result else "")
+
+    header = (f"{status_icon} **{match['home']} vs {match['away']}** "
+              f"— {STAGE_LABELS.get(stage, stage)} · {match['time']} Dubai{manual_badge}")
     if has_result:
         header += f"  →  **{result['home_score']} – {result['away_score']}**"
         if result.get("penalty_winner"):
@@ -63,52 +172,58 @@ def render_result_form(match: dict, result: dict | None):
         st.markdown(header)
         col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
         with col1:
-            st.markdown(f"<div style='text-align:right;padding-top:6px;font-weight:600;'>{match['home']}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align:right;padding-top:6px;font-weight:600;'>{match['home']}</div>",
+                        unsafe_allow_html=True)
         with col2:
-            h_val = st.number_input(
-                "Home", min_value=0, max_value=20,
-                value=int(result["home_score"]) if result else 0,
-                key=f"rh_{match['id']}", label_visibility="collapsed",
-            )
+            h_val = st.number_input("Home", min_value=0, max_value=20,
+                                    value=int(result["home_score"]) if result else 0,
+                                    key=f"rh_{match['id']}", label_visibility="collapsed")
         with col3:
-            a_val = st.number_input(
-                "Away", min_value=0, max_value=20,
-                value=int(result["away_score"]) if result else 0,
-                key=f"ra_{match['id']}", label_visibility="collapsed",
-            )
+            a_val = st.number_input("Away", min_value=0, max_value=20,
+                                    value=int(result["away_score"]) if result else 0,
+                                    key=f"ra_{match['id']}", label_visibility="collapsed")
         with col4:
-            st.markdown(f"<div style='padding-top:6px;font-weight:600;'>{match['away']}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='padding-top:6px;font-weight:600;'>{match['away']}</div>",
+                        unsafe_allow_html=True)
 
         pen_winner = result.get("penalty_winner") if result else None
         if is_ko and h_val == a_val:
-            st.markdown("<div style='font-size:12px;color:#94a3b8;'>Draw → select penalty winner</div>", unsafe_allow_html=True)
-            p1, p2, p3 = st.columns([1, 1, 2])
+            st.markdown("<div style='font-size:12px;color:#94a3b8;'>Draw → select penalty winner</div>",
+                        unsafe_allow_html=True)
+            p1, p2, _ = st.columns([1, 1, 2])
             with p1:
-                if st.button(f"{match['home']}", key=f"rph_{match['id']}",
+                if st.button(match["home"], key=f"rph_{match['id']}",
                              type="primary" if pen_winner == "home" else "secondary",
                              use_container_width=True):
                     pen_winner = "home"
             with p2:
-                if st.button(f"{match['away']}", key=f"rpa_{match['id']}",
+                if st.button(match["away"], key=f"rpa_{match['id']}",
                              type="primary" if pen_winner == "away" else "secondary",
                              use_container_width=True):
                     pen_winner = "away"
             if pen_winner is None and result and result.get("penalty_winner"):
                 pen_winner = result["penalty_winner"]
 
-        save_col, _ = st.columns([1, 4])
-        with save_col:
-            if st.button("💾 Save Result", key=f"rsave_{match['id']}", type="primary", use_container_width=True):
-                db.save_result(match["id"], h_val, a_val, pen_winner if (is_ko and h_val == a_val) else None)
-                st.success("Result saved!")
+        btn_col1, btn_col2, _ = st.columns([1, 1, 3])
+        with btn_col1:
+            if st.button("💾 Save (Manual)", key=f"rsave_{match['id']}", type="primary", use_container_width=True):
+                db.save_result_manual(match["id"], h_val, a_val,
+                                      pen_winner if (is_ko and h_val == a_val) else None)
+                st.success("Saved!")
                 st.rerun()
+        with btn_col2:
+            if is_manual:
+                if st.button("🤖 Release to API", key=f"release_{match['id']}", use_container_width=True):
+                    db.clear_manual_override(match["id"])
+                    st.success("Released.")
+                    st.rerun()
         st.divider()
 
-def show_password_reset(users: list[dict]):
-    st.divider()
-    st.subheader("🔑 Reset Player Password")
 
-    # Exclude the admin from the list
+# ── PASSWORD RESET ────────────────────────────────────────────────────────────
+
+def show_password_reset(users: list[dict]):
+    st.subheader("🔑 Reset Player Password")
     current_user_id = st.session_state.user["id"]
     other_users = [u for u in users if u["id"] != current_user_id]
 
@@ -118,8 +233,8 @@ def show_password_reset(users: list[dict]):
 
     usernames = [u["username"] for u in other_users]
     selected_username = st.selectbox("Select player", usernames, key="reset_user_select")
-    new_password = st.text_input("New password", type="password", key="reset_new_pass")
-    confirm_password = st.text_input("Confirm new password", type="password", key="reset_confirm_pass")
+    new_password      = st.text_input("New password", type="password", key="reset_new_pass")
+    confirm_password  = st.text_input("Confirm new password", type="password", key="reset_confirm_pass")
 
     if st.button("Reset Password", type="primary", key="reset_btn"):
         if not new_password:
