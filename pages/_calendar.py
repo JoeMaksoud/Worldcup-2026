@@ -1,4 +1,4 @@
-# pages/calendar.py
+# pages/_calendar.py
 import streamlit as st
 from datetime import datetime, timezone, timedelta
 import db
@@ -39,15 +39,31 @@ def mult_badge(stage: str) -> str:
             f'border-radius:4px;font-size:11px;font-weight:700;">{m}× POINTS</span>')
 
 
+def apply_overrides(matches: list[dict], overrides: dict[int, dict]) -> list[dict]:
+    """Replace placeholder team names with confirmed names from match_overrides."""
+    result = []
+    for m in matches:
+        if m["id"] in overrides:
+            m = dict(m)  # don't mutate the original
+            m["home"] = overrides[m["id"]]["home"]
+            m["away"] = overrides[m["id"]]["away"]
+        result.append(m)
+    return result
+
+
 def show(user: dict):
     st.title("📅 Match Calendar")
 
-    preds = db.get_predictions_for_user(user["id"])
-    results = db.get_all_results()
+    preds    = db.get_predictions_for_user(user["id"])
+    results  = db.get_all_results()
+    overrides = db.get_match_overrides()  # ← knockout team name overrides
+
+    # Apply overrides to all matches
+    all_matches = apply_overrides(MATCHES, overrides)
 
     from collections import defaultdict
     by_date: dict[str, list] = defaultdict(list)
-    for m in MATCHES:
+    for m in all_matches:
         by_date[m["date"]].append(m)
 
     months = sorted({d[:7] for d in by_date})
@@ -167,7 +183,6 @@ def render_match(match: dict, pred: dict | None, result: dict | None, user: dict
 
     # ── Penalty picker ────────────────────────────────────────────
     pen_winner = None
-
     if is_ko and h_val == a_val:
         saved_pen = pred.get("penalty_winner") if pred else None
         options = [match["home"], match["away"]]
@@ -187,7 +202,6 @@ def render_match(match: dict, pred: dict | None, result: dict | None, user: dict
             key=f"pen_radio_{match['id']}",
             label_visibility="collapsed",
         )
-
         pen_winner = "home" if radio_val == match["home"] else "away"
 
     # ── Save button ───────────────────────────────────────────────
