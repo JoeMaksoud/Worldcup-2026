@@ -139,16 +139,12 @@ def sync_results_from_api(api_results: list[dict], our_matches: list[dict]) -> t
     Returns (synced_count, skipped_count).
     """
     existing = get_all_results()
-    our_match_ids = {m["id"] for m in our_matches}
     synced = skipped = 0
 
     for api_r in api_results:
-        # Try direct ID match first
-        mid = api_r.get("api_id")
-        if mid not in our_match_ids:
-            # Fall back to name matching
-            match = _find_match(api_r, our_matches)
-            mid = match["id"] if match else None
+        # Match by team names (API IDs differ from ours)
+        match = _find_match(api_r, our_matches)
+        mid = match["id"] if match else None
         if not mid:
             continue
 

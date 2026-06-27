@@ -4,19 +4,40 @@ import requests
 
 API_HOST = "wc26-live-football-api.p.rapidapi.com"
 
-# Round strings → our stage codes
 STAGE_MAP = {
-    "matchday":    "gs",
-    "group":       "gs",
+    "matchday": "gs",
+    "group":    "gs",
     "round of 32": "r32",
     "round of 16": "r16",
-    "quarter":     "qf",
-    "semi":        "sf",
-    "third":       "3p",
-    "final":       "f",
+    "quarter":  "qf",
+    "semi":     "sf",
+    "third":    "3p",
+    "final":    "f",
 }
 
 FINISHED_STATUSES = {"FT", "AET", "PEN", "ft", "aet", "pen"}
+
+# API team name → our matches.py team name
+TEAM_NAME_MAP = {
+    "Czech Republic": "Czechia",
+    "Türkiye":        "Türkiye",
+    "Turkey":         "Türkiye",
+    "Ivory Coast":    "Ivory Coast",
+    "Cote d'Ivoire":  "Ivory Coast",
+    "Bosnia":         "Bosnia & Herzegovina",
+    "Bosnia and Herzegovina": "Bosnia & Herzegovina",
+    "DR Congo":       "DR Congo",
+    "Congo DR":       "DR Congo",
+    "New Zealand":    "New Zealand",
+    "South Korea":    "South Korea",
+    "Korea Republic": "South Korea",
+    "USA":            "USA",
+    "United States":  "USA",
+}
+
+
+def _normalise_team(name: str) -> str:
+    return TEAM_NAME_MAP.get(name, name)
 
 
 def _headers() -> dict:
@@ -47,12 +68,10 @@ def _fetch_all_matches() -> list[dict]:
     data = _get("matches")
     if not data or not isinstance(data, dict):
         return []
-    # Response: {"count": 104, "data": {"": [...]}, "status": "ok"}
     inner = data.get("data", {})
     if isinstance(inner, list):
         return inner
     if isinstance(inner, dict):
-        # data is {"": [...]} — flatten all values
         all_matches = []
         for v in inner.values():
             if isinstance(v, list):
@@ -91,20 +110,24 @@ def _map_stage(round_str: str) -> str | None:
 
 
 def _parse_match(m: dict) -> dict | None:
-    """Parse a match from the WC26 API into our internal format."""
-    home = m.get("home")
-    away = m.get("away")
-    if not home or not away:
+    home_raw = m.get("home", "")
+    away_raw = m.get("away", "")
+    if not home_raw or not away_raw:
         return None
 
-    # Scores live inside live_data
-    live = m.get("live_data") or {}
+    home = _normalise_team(home_raw)
+    away = _normalise_team(away_raw)
+
+    # Status at root level
+    status = m.get("status", "")
+    played = m.get("played", False)
+
+    # Scores from live_data
+    live       = m.get("live_data") or {}
     home_score = live.get("score_home")
     away_score = live.get("score_away")
-    status     = live.get("status") or ""
-    played     = m.get("played", False)
 
-    # Fallback: parse "score" string like "2-1"
+    # Fallback: parse root "score" string e.g. "2-1"
     if home_score is None and m.get("score"):
         try:
             parts = str(m["score"]).split("-")
@@ -113,18 +136,17 @@ def _parse_match(m: dict) -> dict | None:
         except Exception:
             pass
 
-    # Stage from round
-    round_str = m.get("round") or m.get("stage") or ""
+    # Stage from root round
+    round_str = m.get("round") or ""
     stage = _map_stage(round_str)
 
-    # Penalty winner — count goals per team for PEN matches
+    # Penalty winner — infer from goals if PEN
     penalty_winner = None
     if status == "PEN":
         goals = live.get("goals") or []
-        home_goals = sum(1 for g in goals if g.get("team") == home)
-        away_goals = sum(1 for g in goals if g.get("team") == away)
-        if home_goals != away_goals:
-            penalty_winner = "home" if home_goals > away_goals else "away"
+        home_goals = sum(1 for g in goals if _normalise_team(g.get("team", "")) == home)
+        away_goals = sum(1 for g in goals if _normalise_team(g.get("team", "")) == away)
+        penalty_winner = "home" if home_goals > away_goals else "away"
 
     return {
         "api_id":         m.get("id"),
@@ -141,13 +163,11 @@ def _parse_match(m: dict) -> dict | None:
 
 
 def get_finished_results() -> list[dict]:
-    """Returns all finished matches with scores."""
     out = []
     for m in _fetch_all_matches():
         p = _parse_match(m)
         if not p:
             continue
-        # Match is finished if status is FT/AET/PEN or played=true
         is_finished = p["status"] in FINISHED_STATUSES or p.get("played")
         if is_finished and p["home_score"] is not None and p["stage"]:
             out.append(p)
@@ -155,7 +175,6 @@ def get_finished_results() -> list[dict]:
 
 
 def get_upcoming_with_teams() -> list[dict]:
-    """Returns knockout fixtures where both teams are confirmed."""
     out = []
     for m in _fetch_all_matches():
         p = _parse_match(m)
