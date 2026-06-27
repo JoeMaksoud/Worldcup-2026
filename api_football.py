@@ -63,7 +63,7 @@ def is_api_configured() -> bool:
     return bool(st.secrets.get("RAPIDAPI_KEY", "").strip())
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=86400)
 def _fetch_all_matches() -> list[dict]:
     data = _get("matches")
     if not data or not isinstance(data, dict):
@@ -80,7 +80,7 @@ def _fetch_all_matches() -> list[dict]:
     return []
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=86400)
 def _fetch_live_matches_raw() -> list[dict]:
     data = _get("live")
     if not data:
@@ -163,6 +163,7 @@ def _parse_match(m: dict) -> dict | None:
 
 
 def get_finished_results() -> list[dict]:
+    _fetch_all_matches.clear()  # force fresh fetch on manual sync
     out = []
     for m in _fetch_all_matches():
         p = _parse_match(m)
@@ -175,6 +176,7 @@ def get_finished_results() -> list[dict]:
 
 
 def get_upcoming_with_teams() -> list[dict]:
+    _fetch_all_matches.clear()  # force fresh fetch on manual sync
     out = []
     for m in _fetch_all_matches():
         p = _parse_match(m)
